@@ -1,5 +1,15 @@
-node_modules
-dist
+node_modules/
+dist/
+build/
 .env
+*.env
+.env.local
+.env.*.local
 *.log
 .DS_Store
+.claude/
+memory/
+MEMORY.md
+local.json
+.vscode/
+.idea/
