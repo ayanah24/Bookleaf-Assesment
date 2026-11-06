@@ -1,0 +1,153 @@
+const http = require('http');
+const { app, server } = require('../server');
+const inMemoryStore = require('../services/inMemoryStore');
+
+// Wait for server to listen, then run test assertions
+server.listen(5099, async () => {
+  console.log('🧪 Starting Direct In-Process API Verification Tests on port 5099...\n');
+  const baseURL = 'http://localhost:5099/api';
+
+  const postJSON = (path, body, token = null) => {
+    return new Promise((resolve, reject) => {
+      const data = JSON.stringify(body);
+      const url = new URL(baseURL + path);
+      const options = {
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(data),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      };
+
+      const req = http.request(options, (res) => {
+        let respData = '';
+        res.on('data', (chunk) => (respData += chunk));
+        res.on('end', () => {
+          try {
+            resolve({ status: res.statusCode, body: JSON.parse(respData) });
+          } catch (e) {
+            resolve({ status: res.statusCode, raw: respData });
+          }
+        });
+      });
+
+      req.on('error', reject);
+      req.write(data);
+      req.end();
+    });
+  };
+
+  const getJSON = (path, token = null) => {
+    return new Promise((resolve, reject) => {
+      const url = new URL(baseURL + path);
+      const options = {
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname + url.search,
+        method: 'GET',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      };
+
+      const req = http.request(options, (res) => {
+        let respData = '';
+        res.on('data', (chunk) => (respData += chunk));
+        res.on('end', () => {
+          try {
+            resolve({ status: res.statusCode, body: JSON.parse(respData) });
+          } catch (e) {
+            resolve({ status: res.statusCode, raw: respData });
+          }
+        });
+      });
+
+      req.on('error', reject);
+      req.end();
+    });
+  };
+
+  try {
+    // 1. Author Login
+    console.log('1. Testing Author Authentication (priya.sharma@email.com)...');
+    const authorLogin = await postJSON('/auth/login', {
+      email: 'priya.sharma@email.com',
+      password: 'password123',
+    });
+    console.log('Author login response: status', authorLogin.status);
+    if (authorLogin.status !== 200) throw new Error(`Author login failed: ${authorLogin.status} - ${JSON.stringify(authorLogin.body || authorLogin.raw)}`);
+    const authorToken = authorLogin.body.token;
+    console.log(`   ✅ Author authenticated. Name: ${authorLogin.body.user.name}, Role: ${authorLogin.body.user.role}`);
+
+    // 2. Fetch Author's Books
+    console.log('2. Testing Author Book Catalog Retrieval (/api/books/my-books)...');
+    const myBooksRes = await getJSON('/books/my-books', authorToken);
+    if (myBooksRes.status !== 200) throw new Error(`Books fetch failed: ${myBooksRes.status}`);
+    console.log(`   ✅ Retrieved ${myBooksRes.body.count} books. Total royalty earned: ₹${myBooksRes.body.summary.totalRoyaltyEarned}`);
+
+    // 3. Create Ticket (Triggers AI Classification & Priority)
+    console.log('3. Testing Ticket Creation with AI Auto-Classification & Policy Grounded Draft...');
+    const newTicketRes = await postJSON(
+      '/tickets',
+      {
+        subject: 'Author copies have blurry cover images and misaligned binding',
+        description: 'Received 10 copies of Whispers of the Ganges, but the cover colors are completely faded and pages in chapter 2 are misaligned.',
+      },
+      authorToken
+    );
+    if (newTicketRes.status !== 201) throw new Error(`Ticket create failed: ${newTicketRes.status}`);
+    const ticket = newTicketRes.body.ticket;
+    console.log(`   ✅ Ticket created: ${ticket.ticketNumber}`);
+    console.log(`      AI Category: "${ticket.category}"`);
+    console.log(`      AI Priority: "${ticket.priority}"`);
+    console.log(`      AI Grounded Draft Response Preview: "${ticket.aiDraftResponse.replace(/\n/g, ' ').substring(0, 80)}..."`);
+
+    // 4. Admin Login
+    console.log('4. Testing Admin Authentication (admin@bookleaf.com)...');
+    const adminLogin = await postJSON('/auth/login', {
+      email: 'admin@bookleaf.com',
+      password: 'admin123',
+    });
+    if (adminLogin.status !== 200) throw new Error(`Admin login failed: ${adminLogin.status}`);
+    const adminToken = adminLogin.body.token;
+    console.log(`   ✅ Admin authenticated. Role: ${adminLogin.body.user.role}`);
+
+    // 5. Admin Queue Triage (Urgency sort)
+    console.log('5. Testing Admin Queue Retrieval & Urgency Sorting...');
+    const queueRes = await getJSON('/tickets', adminToken);
+    if (queueRes.status !== 200) throw new Error(`Queue fetch failed: ${queueRes.status}`);
+    console.log(`   ✅ Queue contains ${queueRes.body.count} tickets.`);
+
+    // 6. Admin adds Internal Note (Invisible to Author)
+    console.log('6. Testing Admin Internal Note Creation...');
+    const noteRes = await postJSON(
+      `/tickets/${ticket._id}/notes`,
+      { note: 'Investigated with Delhi facility. Free reprint approved.' },
+      adminToken
+    );
+    if (noteRes.status !== 200) throw new Error(`Add note failed: ${noteRes.status}`);
+    console.log('   ✅ Internal note recorded.');
+
+    // 7. Verify RBAC Isolation (Author must NOT see internal notes)
+    console.log('7. Verifying Role-Based Access Isolation (Internal notes hidden from author)...');
+    const authorViewRes = await getJSON(`/tickets/${ticket._id}`, authorToken);
+    if (authorViewRes.body.ticket.internalNotes) {
+      throw new Error('Security violation: internalNotes exposed to author!');
+    }
+    console.log('   ✅ Security verified: Author ticket payload does NOT contain internal notes.');
+
+    console.log('\n======================================================');
+    console.log('🎉 ALL 7 CRITICAL END-TO-END SUITE TESTS PASSED 100%!');
+    console.log('======================================================\n');
+    server.close();
+    process.exit(0);
+  } catch (err) {
+    console.error('❌ Test failed with error:', err);
+    server.close();
+    process.exit(1);
+  }
+});

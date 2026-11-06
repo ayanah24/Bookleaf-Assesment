@@ -1,0 +1,13 @@
+{
+  "name": "bookleaf-assessment-portal",
+  "version": "1.0.0",
+  "description": "BookLeaf Author Support & Communication Portal (MERN Stack with AI Integration)",
+  "scripts": {
+    "dev:backend": "cd backend && npm start",
+    "dev:frontend": "cd frontend && npm run dev",
+    "seed": "cd backend && npm run seed",
+    "test:api": "node backend/scripts/runSelfTest.js",
+    "build": "cd frontend && npm run build"
+  },
+  "keywords": ["mern", "support-portal", "ai-classification", "socket.io", "react", "express"]
+}
